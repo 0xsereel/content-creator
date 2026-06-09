@@ -1158,6 +1158,11 @@ def _format_text(text: str) -> str:
     text = text.replace(")", " ")
     text = text.replace("{", " ")
     text = text.replace("}", " ")
+    # Normalize Unicode smart quotes to ASCII to avoid font spacing issues
+    text = text.replace("\u2018", "'")   # left single quotation mark
+    text = text.replace("\u2019", "'")   # right single quotation mark
+    text = text.replace("\u201c", '"')   # left double quotation mark
+    text = text.replace("\u201d", '"')   # right double quotation mark
     return utils.normalize_script_for_subtitle_matching(text)
 
 

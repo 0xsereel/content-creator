@@ -392,6 +392,86 @@ def _open_video_clip_quietly(video_path: str, audio: bool = False) -> VideoFileC
     return clip
 
 
+def create_image_clip_with_motion(
+    image_path: str,
+    duration: float,
+    output_path: str,
+    video_width: int,
+    video_height: int,
+) -> str:
+    """Convert a static image into a video clip with gentle Ken Burns motion."""
+    img_clip = ImageClip(image_path)
+    img_w, img_h = img_clip.size
+
+    # Scale to cover the video frame
+    base_scale = max(video_width / img_w, video_height / img_h)
+    base_w = int(img_w * base_scale)
+    base_h = int(img_h * base_scale)
+    img_clip = img_clip.resized(new_size=(base_w, base_h))
+
+    # Gentle zoom: 1.0 -> 1.08 over the clip duration
+    def zoom(t):
+        return 1.0 + 0.08 * (t / max(duration, 0.1))
+
+    # Subtle random pan direction
+    pan_choices = [
+        ("left", "center"),
+        ("right", "center"),
+        ("center", "top"),
+        ("center", "bottom"),
+        ("center", "center"),
+    ]
+    pan_h, pan_v = random.choice(pan_choices)
+
+    def get_pos(t):
+        s = zoom(t)
+        w = base_w * s
+        h = base_h * s
+        progress = t / max(duration, 0.1)
+
+        if pan_h == "left":
+            x_start = 0
+        elif pan_h == "right":
+            x_start = video_width - w
+        else:
+            x_start = (video_width - w) / 2
+
+        if pan_v == "top":
+            y_start = 0
+        elif pan_v == "bottom":
+            y_start = video_height - h
+        else:
+            y_start = (video_height - h) / 2
+
+        x_end = (video_width - w) / 2
+        y_end = (video_height - h) / 2
+
+        x = x_start + (x_end - x_start) * progress
+        y = y_start + (y_end - y_start) * progress
+        return (x, y)
+
+    animated = (
+        img_clip.with_duration(duration)
+        .resized(zoom)
+        .with_position(get_pos)
+    )
+    bg = ColorClip(
+        size=(video_width, video_height), color=(0, 0, 0)
+    ).with_duration(duration)
+    final = CompositeVideoClip([bg, animated])
+
+    _write_videofile_with_codec_fallback(
+        final,
+        output_path,
+        codec=_get_configured_video_codec(),
+        fps=fps,
+        logger=None,
+    )
+    close_clip(final)
+    close_clip(img_clip)
+    return output_path
+
+
 def close_clip(clip):
     if clip is None:
         return
@@ -793,6 +873,52 @@ def _rounded_subtitle_background_clip(
     return ImageClip(np.array(img), transparent=True)
 
 
+def _create_logo_clip(video_width: int, video_height: int, duration: float) -> ImageClip:
+    """Create a logo watermark clip for the top-left corner."""
+    logo_cfg = getattr(config, "logo", {})
+    if not logo_cfg.get("enabled", False):
+        return None
+
+    logo_path = logo_cfg.get("path", "")
+    if not logo_path:
+        return None
+
+    # Resolve relative paths against project root
+    if not os.path.isabs(logo_path):
+        logo_path = os.path.join(utils.root_dir(), logo_path)
+
+    if not os.path.exists(logo_path):
+        logger.warning(f"logo file not found: {logo_path}")
+        return None
+
+    try:
+        logo_img = Image.open(logo_path)
+        target_width = int(logo_cfg.get("width", 120))
+        # Maintain aspect ratio
+        aspect = logo_img.height / logo_img.width
+        target_height = int(target_width * aspect)
+        logo_img = logo_img.resize((target_width, target_height), Image.LANCZOS)
+
+        # Preserve alpha channel for transparent PNGs
+        if logo_img.mode == "RGBA":
+            logo_clip = ImageClip(np.array(logo_img), transparent=True)
+        else:
+            logo_clip = ImageClip(np.array(logo_img))
+
+        # Position: vertically at top margin, horizontally shifted left by half the logo width
+        # so the logo is centered on the left edge (half on-screen, half off-screen)
+        margin_y = int(logo_cfg.get("margin", 20))
+        pos_x = int(-target_width / 2)
+        logo_clip = (
+            logo_clip.with_duration(duration)
+            .with_position((pos_x, margin_y))
+        )
+        return logo_clip
+    except Exception as e:
+        logger.warning(f"failed to create logo clip: {e}")
+        return None
+
+
 def generate_video(
     video_path: str,
     audio_path: str,
@@ -938,6 +1064,18 @@ def generate_video(
         [afx.MultiplyVolume(params.voice_volume)]
     )
 
+    # Trim video to match narration audio duration so the video ends when words end
+    if video_clip.duration > audio_clip.duration:
+        logger.info(
+            f"trimming video from {video_clip.duration:.2f}s to match audio duration {audio_clip.duration:.2f}s"
+        )
+        video_clip = video_clip.subclipped(0, audio_clip.duration)
+    elif video_clip.duration < audio_clip.duration:
+        logger.warning(
+            f"video duration ({video_clip.duration:.2f}s) is shorter than audio ({audio_clip.duration:.2f}s), "
+            "this may cause audio cutoff"
+        )
+
     def make_textclip(text):
         return TextClip(
             text=text,
@@ -954,6 +1092,11 @@ def generate_video(
             clip = create_text_clip(subtitle_item=item)
             text_clips.append(clip)
         video_clip = CompositeVideoClip([video_clip, *text_clips])
+
+    # Add Sereel logo watermark to top-left corner
+    logo_clip = _create_logo_clip(video_width, video_height, video_clip.duration)
+    if logo_clip is not None:
+        video_clip = CompositeVideoClip([video_clip, logo_clip])
 
     bgm_file = get_bgm_file(bgm_type=params.bgm_type, bgm_file=params.bgm_file)
     if bgm_file:

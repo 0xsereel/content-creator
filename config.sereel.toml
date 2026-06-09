@@ -1,3 +1,7 @@
+# Sereel Phase 0 Config Template
+# Copy this file to config.toml and fill in the API keys below.
+# See docs/SEREEL_PHASE0_PLAN.md for full instructions.
+#
 [app]
 video_source = "pexels" # "pexels", "pixabay", "local", or "ai_generated"
 
@@ -20,7 +24,7 @@ tls_verify = true
 # You can use multiple keys to avoid rate limits.
 # For example: pexels_api_keys = ["123adsf4567adf89","abd1321cd13efgfdfhi"]
 # 特别注意格式，Key 用英文双引号括起来，多个Key用逗号隔开
-pexels_api_keys = []
+pexels_api_keys = []  # TODO: paste Sereel Pexels key here, e.g. ["your-key"]
 
 # Pixabay API Key
 # Register at https://pixabay.com/api/docs/ to get your API key.
@@ -46,7 +50,7 @@ pixabay_api_keys = []
 #   ernie       (文心一言)
 #   modelscope  (魔搭社区)
 #   litellm     (100+ providers via LiteLLM gateway)
-llm_provider = "openai"
+llm_provider = "deepseek"  # Sereel default: DeepSeek for low cost
 
 ########## Pollinations AI Settings
 # Visit https://pollinations.ai/ to learn more
@@ -161,7 +165,7 @@ mimo_tts_style_prompt = "请用自然、清晰、适合短视频旁白的语气�
 
 ########## DeepSeek API Key
 # Visit https://platform.deepseek.com/api_keys to get your API key
-deepseek_api_key = ""
+deepseek_api_key = ""  # TODO: paste Sereel DeepSeek key here
 deepseek_base_url = "https://api.deepseek.com"
 deepseek_model_name = "deepseek-chat"
 
