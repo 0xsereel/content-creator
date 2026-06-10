@@ -373,3 +373,21 @@ path = "resource/public/sereel_logo.png"
 width = 240
 position = "top-left"
 margin = 20
+
+# --- Keyword-triggered image overlays ---
+# When a keyword appears in the subtitle text, the corresponding image
+# fades in smoothly at that moment. Configure images below.
+[keyword_overlay]
+enabled = false
+fade_duration = 0.6        # seconds to fade in/out
+display_duration = 3.0     # how long the image stays visible
+image_size = 180           # width in pixels
+position = "center"        # "center", "top", "bottom", "top-right", "top-left"
+
+[[keyword_overlay.images]]
+keyword = "ethereum"
+path = "resource/overlays/ethereum.png"
+
+[[keyword_overlay.images]]
+keyword = "stablecoin"
+path = "resource/overlays/stablecoin.png"

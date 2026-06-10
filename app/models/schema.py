@@ -110,6 +110,17 @@ class VideoParams(BaseModel):
     video_script_prompt: str = Field(default="", max_length=2000)
     custom_system_prompt: str = Field(default="", max_length=8000)
 
+    # Keyword overlay settings (UI-configurable)
+    keyword_overlay_enabled: Optional[bool] = False
+    keyword_overlay_images: Optional[List[dict]] = None  # [{"keyword": "eth", "path": "..."}]
+    keyword_overlay_position: Optional[str] = "center"
+    keyword_overlay_size: Optional[int] = 180
+    keyword_overlay_fade: Optional[float] = 0.6
+    keyword_overlay_display: Optional[float] = 3.0
+
+    # AI generation scene density
+    ai_scene_count: Optional[int] = 8  # Number of AI-generated images per video (3-20)
+
 
 class SubtitleRequest(BaseModel):
     video_script: str
