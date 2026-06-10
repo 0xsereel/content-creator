@@ -192,8 +192,9 @@ def get_video_materials(task_id, params, video_terms, audio_duration, video_scri
             import re
             sentences = re.split(r'(?<=[.!?])\s+', raw_scenes[0])
             sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
-            # Group sentences into ~6-16 scenes depending on length (doubled for more visual variety)
-            target_scenes = max(6, min(16, len(sentences)))
+            # Group sentences into scenes based on user preference (default 8)
+            ai_scene_count = getattr(params, "ai_scene_count", 8)
+            target_scenes = max(3, min(20, ai_scene_count))
             group_size = max(1, len(sentences) // target_scenes)
             raw_scenes = []
             for i in range(0, len(sentences), group_size):
@@ -292,6 +293,19 @@ def generate_final_videos(
         params.video_concat_mode if params.video_count == 1 else VideoConcatMode.random
     )
     video_transition_mode = params.video_transition_mode
+
+    # Sync UI-configured keyword overlays into config for video.py to read
+    if getattr(params, "keyword_overlay_enabled", False):
+        config.keyword_overlay = {
+            "enabled": True,
+            "position": getattr(params, "keyword_overlay_position", "center"),
+            "image_size": getattr(params, "keyword_overlay_size", 180),
+            "fade_duration": getattr(params, "keyword_overlay_fade", 0.6),
+            "display_duration": getattr(params, "keyword_overlay_display", 3.0),
+            "images": getattr(params, "keyword_overlay_images", []) or [],
+        }
+    else:
+        config.keyword_overlay = {"enabled": False}
 
     _progress = 50
     for i in range(params.video_count):

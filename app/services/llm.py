@@ -116,7 +116,15 @@ def _extract_qwen_generation_text(response) -> str:
     return _normalize_text_response(text, "qwen")
 
 
-def _generate_response(prompt: str) -> str:
+def _generate_response(prompt: str, system: str = None) -> str:
+    """
+    Generate a response from the configured LLM provider.
+    
+    Args:
+        prompt: The user prompt content.
+        system: Optional system instruction. When provided, messages are sent
+                as [system, user] instead of a single user message.
+    """
     try:
         content = ""
         llm_provider = config.app.get("llm_provider", "openai")
@@ -529,8 +537,12 @@ def _generate_response(prompt: str) -> str:
                     base_url=base_url,
                 )
 
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
             response = client.chat.completions.create(
-                model=model_name, messages=[{"role": "user", "content": prompt}]
+                model=model_name, messages=messages
             )
             if response:
                 if isinstance(response, ChatCompletion):
@@ -720,10 +732,15 @@ def generate_scene_prompts(scenes: List[str], style_cfg: dict) -> List[dict]:
     raw = ""
     for attempt in range(_max_retries):
         try:
-            raw = _generate_response(prompt=f"{system}\n\n{user}")
-            if not raw or "Error: " in raw:
+            raw = _generate_response(prompt=user, system=system)
+            if not raw:
+                logger.warning("scene prompt generation returned empty response")
+                continue
+            if "Error: " in raw:
                 logger.warning(f"scene prompt generation returned error: {raw}")
                 continue
+            # Log first 500 chars of raw response for debugging
+            logger.debug(f"scene prompt raw response: {raw[:500]}")
             partials = json.loads(raw)
             if not isinstance(partials, list):
                 logger.warning("scene prompt response is not a JSON array")

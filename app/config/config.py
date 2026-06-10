@@ -177,6 +177,14 @@ logo = _cfg.get("logo", {
     "position": "top-left",
     "margin": 20,
 })
+keyword_overlay = _cfg.get("keyword_overlay", {
+    "enabled": False,
+    "images": [],
+    "fade_duration": 0.5,
+    "display_duration": 3.0,
+    "image_size": 200,
+    "position": "center",
+})
 
 hostname = socket.gethostname()
 

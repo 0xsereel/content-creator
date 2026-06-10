@@ -133,6 +133,56 @@ The tool will never generate images for you in Phase 0. Aishat creates or select
 
 ---
 
+## 6b. Keyword-triggered image overlays (optional)
+
+In addition to the main visuals, you can configure **keyword overlays** — images that fade in smoothly whenever a specific word is spoken in the narration. This is useful for reinforcing concepts visually: when the narrator says "Ethereum," an Ethereum logo pops up; when "stablecoin" is mentioned, a stablecoin icon appears.
+
+**How it works:**
+- The tool scans the subtitle text for configured keywords
+- When a keyword is found, the matching image fades in at that exact moment
+- The image stays visible for a few seconds, then fades out
+- Each keyword only triggers once per video (first match wins)
+
+**Setup:**
+1. Place your overlay images in `resource/overlays/` (create the folder if needed). PNG with transparency works best.
+2. Open `config.toml` and add a `[keyword_overlay]` section:
+
+```toml
+[keyword_overlay]
+enabled = true
+fade_duration = 0.6        # seconds to fade in/out
+display_duration = 3.0     # how long the image stays visible
+image_size = 180           # width in pixels
+position = "center"        # options: center, top, bottom, top-right, top-left
+
+[[keyword_overlay.images]]
+keyword = "ethereum"
+path = "resource/overlays/ethereum.png"
+
+[[keyword_overlay.images]]
+keyword = "stablecoin"
+path = "resource/overlays/stablecoin.png"
+
+[[keyword_overlay.images]]
+keyword = "africa"
+path = "resource/overlays/africa-map.png"
+```
+
+3. Restart the tool (`Ctrl + C` then `docker compose up`) to pick up the changes.
+
+**Position options:**
+| Value | Placement |
+|-------|-----------|
+| `center` | Center of screen |
+| `top` | Horizontally centered, upper third |
+| `bottom` | Horizontally centered, lower third (above subtitles) |
+| `top-right` | Top right corner |
+| `top-left` | Top left corner |
+
+The overlay sits above the video and subtitles but below the Sereel logo. Transparent PNGs are fully supported.
+
+---
+
 ## 7. Generating a video
 
 1. Enter a **topic** and the **key points** you want covered.

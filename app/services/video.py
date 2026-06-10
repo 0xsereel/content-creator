@@ -20,6 +20,7 @@ from moviepy import (
     TextClip,
     VideoFileClip,
     afx,
+    vfx,
 )
 from moviepy.video.tools.subtitles import SubtitlesClip
 from PIL import Image, ImageDraw, ImageFont
@@ -905,18 +906,135 @@ def _create_logo_clip(video_width: int, video_height: int, duration: float) -> I
         else:
             logo_clip = ImageClip(np.array(logo_img))
 
-        # Position: vertically at top margin, horizontally shifted left by half the logo width
-        # so the logo is centered on the left edge (half on-screen, half off-screen)
+        # Position: vertically at top margin, horizontally inset by a small margin
         margin_y = int(logo_cfg.get("margin", 20))
-        pos_x = int(-target_width / 2)
+        margin_x = int(logo_cfg.get("margin", 20))
         logo_clip = (
             logo_clip.with_duration(duration)
-            .with_position((pos_x, margin_y))
+            .with_position((margin_x, margin_y))
         )
         return logo_clip
     except Exception as e:
         logger.warning(f"failed to create logo clip: {e}")
         return None
+
+
+def _create_keyword_overlay_clips(
+    subtitle_items: list,
+    video_width: int,
+    video_height: int,
+) -> list:
+    """
+    Create timed image overlay clips triggered by keywords in subtitle text.
+    Each overlay fades in smoothly when its keyword is spoken.
+
+    Configured via [keyword_overlay] in config.toml:
+        enabled = true
+        [[keyword_overlay.images]]
+        keyword = "ethereum"
+        path = "resource/overlays/ethereum.png"
+        [[keyword_overlay.images]]
+        keyword = "stablecoin"
+        path = "resource/overlays/stablecoin.png"
+    """
+    ko_cfg = getattr(config, "keyword_overlay", {})
+    if not ko_cfg.get("enabled", False):
+        return []
+
+    images_cfg = ko_cfg.get("images", [])
+    if not images_cfg:
+        return []
+
+    # Build keyword -> path mapping
+    keyword_map = {}
+    for item in images_cfg:
+        kw = item.get("keyword", "").lower().strip()
+        path = item.get("path", "")
+        if kw and path:
+            keyword_map[kw] = path
+
+    if not keyword_map:
+        return []
+
+    fade_duration = float(ko_cfg.get("fade_duration", 0.5))
+    display_duration = float(ko_cfg.get("display_duration", 3.0))
+    image_size = int(ko_cfg.get("image_size", 200))
+    position = ko_cfg.get("position", "center")  # "center", "top", "bottom", "top-right", etc.
+
+    overlay_clips = []
+    used_keywords = set()  # One overlay per keyword per video max
+
+    for (start, end), text in subtitle_items:
+        text_lower = text.lower()
+        for keyword, image_path in keyword_map.items():
+            if keyword in text_lower and keyword not in used_keywords:
+                used_keywords.add(keyword)
+
+                if not os.path.isabs(image_path):
+                    image_path = os.path.join(utils.root_dir(), image_path)
+                if not os.path.exists(image_path):
+                    logger.warning(f"keyword overlay image not found: {image_path}")
+                    continue
+
+                try:
+                    img = Image.open(image_path)
+                    aspect = img.height / img.width
+                    target_w = int(image_size)
+                    target_h = int(target_w * aspect)
+                    img = img.resize((target_w, target_h), Image.LANCZOS)
+
+                    if img.mode == "RGBA":
+                        clip = ImageClip(np.array(img), transparent=True)
+                    else:
+                        clip = ImageClip(np.array(img))
+
+                    # Calculate display window
+                    show_start = start
+                    show_end = min(start + display_duration, end)
+                    show_duration = show_end - show_start
+                    if show_duration <= 0:
+                        continue
+
+                    # Position
+                    if position == "center":
+                        pos = ("center", "center")
+                    elif position == "top":
+                        pos = ("center", int(video_height * 0.15))
+                    elif position == "bottom":
+                        pos = ("center", int(video_height * 0.75))
+                    elif position == "top-right":
+                        margin = 30
+                        pos = (video_width - target_w - margin, margin)
+                    elif position == "top-left":
+                        margin = 30
+                        pos = (margin, margin)
+                    else:
+                        pos = ("center", "center")
+
+                    clip = (
+                        clip.with_start(show_start)
+                        .with_end(show_end)
+                        .with_duration(show_duration)
+                        .with_position(pos)
+                    )
+
+                    # Smooth fade in/out
+                    actual_fade = min(fade_duration, show_duration / 3)
+                    if actual_fade > 0.05:
+                        clip = clip.with_effects([
+                            vfx.FadeIn(actual_fade),
+                            vfx.FadeOut(actual_fade),
+                        ])
+
+                    overlay_clips.append(clip)
+                    logger.info(
+                        f"keyword overlay '{keyword}' at {show_start:.2f}s-{show_end:.2f}s"
+                    )
+                except Exception as e:
+                    logger.warning(f"failed to create keyword overlay for '{keyword}': {e}")
+                break  # Only match one keyword per subtitle segment
+
+    return overlay_clips
 
 
 def generate_video(
@@ -1092,6 +1210,15 @@ def generate_video(
             clip = create_text_clip(subtitle_item=item)
             text_clips.append(clip)
         video_clip = CompositeVideoClip([video_clip, *text_clips])
+
+    # Add keyword-triggered custom image overlays
+    keyword_overlay_clips = _create_keyword_overlay_clips(
+        subtitle_items=sub.subtitles if subtitle_path and os.path.exists(subtitle_path) else [],
+        video_width=video_width,
+        video_height=video_height,
+    )
+    if keyword_overlay_clips:
+        video_clip = CompositeVideoClip([video_clip, *keyword_overlay_clips])
 
     # Add Sereel logo watermark to top-left corner
     logo_clip = _create_logo_clip(video_width, video_height, video_clip.duration)

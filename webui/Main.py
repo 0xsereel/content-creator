@@ -796,6 +796,17 @@ with middle_panel:
         params.video_source = video_sources[selected_index][1]
         config.app["video_source"] = params.video_source
 
+        # AI scene count slider — only show when AI Generated is selected
+        if params.video_source == "ai_generated":
+            params.ai_scene_count = st.slider(
+                tr("Number of AI Images"),
+                min_value=3,
+                max_value=20,
+                value=config.ui.get("ai_scene_count", 8),
+                help=tr("More images = more visual variety but longer generation time"),
+            )
+            config.ui["ai_scene_count"] = params.ai_scene_count
+
         if params.video_source == "local":
             # Streamlit 的文件类型校验对扩展名大小写敏感，这里同时放行大小写两种形式。
             local_file_types = ["mp4", "mov", "avi", "flv", "mkv", "jpg", "jpeg", "png"]
@@ -1169,6 +1180,123 @@ with middle_panel:
             options=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
             index=2,
         )
+
+    # --- Keyword Overlay Section ---
+    with st.container(border=True):
+        st.write(tr("Keyword Image Overlays"))
+        params.keyword_overlay_enabled = st.checkbox(
+            tr("Enable Keyword Overlays"),
+            value=config.ui.get("keyword_overlay_enabled", False),
+            help=tr("Images fade in when matching keywords are spoken"),
+        )
+        config.ui["keyword_overlay_enabled"] = params.keyword_overlay_enabled
+
+        if params.keyword_overlay_enabled:
+            # Position
+            overlay_positions = [
+                (tr("Center"), "center"),
+                (tr("Top"), "top"),
+                (tr("Bottom"), "bottom"),
+                (tr("Top Right"), "top-right"),
+                (tr("Top Left"), "top-left"),
+            ]
+            saved_overlay_pos = config.ui.get("keyword_overlay_position", "center")
+            saved_pos_index = 0
+            for i, (_, val) in enumerate(overlay_positions):
+                if val == saved_overlay_pos:
+                    saved_pos_index = i
+                    break
+            selected_pos = st.selectbox(
+                tr("Overlay Position"),
+                options=range(len(overlay_positions)),
+                index=saved_pos_index,
+                format_func=lambda x: overlay_positions[x][0],
+            )
+            params.keyword_overlay_position = overlay_positions[selected_pos][1]
+            config.ui["keyword_overlay_position"] = params.keyword_overlay_position
+
+            # Size
+            params.keyword_overlay_size = st.slider(
+                tr("Overlay Size (px)"), 50, 400,
+                config.ui.get("keyword_overlay_size", 180)
+            )
+            config.ui["keyword_overlay_size"] = params.keyword_overlay_size
+
+            # Fade duration
+            params.keyword_overlay_fade = st.slider(
+                tr("Fade Duration (sec)"), 0.1, 2.0,
+                float(config.ui.get("keyword_overlay_fade", 0.6)),
+                step=0.1,
+            )
+            config.ui["keyword_overlay_fade"] = params.keyword_overlay_fade
+
+            # Display duration
+            params.keyword_overlay_display = st.slider(
+                tr("Display Duration (sec)"), 1.0, 10.0,
+                float(config.ui.get("keyword_overlay_display", 3.0)),
+                step=0.5,
+            )
+            config.ui["keyword_overlay_display"] = params.keyword_overlay_display
+
+            # Image uploads with keywords
+            st.write(tr("Upload overlay images and set their trigger keywords"))
+            overlay_file_types = ["png", "jpg", "jpeg"]
+            overlay_uploads = st.file_uploader(
+                tr("Overlay Images"),
+                type=overlay_file_types + [ft.upper() for ft in overlay_file_types],
+                accept_multiple_files=True,
+                key="keyword_overlay_uploader",
+            )
+
+            # Build the overlay images list
+            overlay_images = []
+            overlays_dir = utils.storage_dir("overlays", create=True)
+
+            if overlay_uploads:
+                for file in overlay_uploads:
+                    file_path = os.path.join(overlays_dir, f"{file.file_id}_{file.name}")
+                    with open(file_path, "wb") as f:
+                        f.write(file.getbuffer())
+                    # Default keyword is the filename without extension
+                    default_kw = os.path.splitext(file.name)[0].lower().replace("_", " ")
+                    overlay_images.append({"keyword": default_kw, "path": file_path})
+
+            # Also load previously saved overlays from config
+            saved_overlays = config.ui.get("keyword_overlay_images", [])
+            for item in saved_overlays:
+                if os.path.exists(item.get("path", "")):
+                    overlay_images.append(item)
+
+            # Deduplicate by path
+            seen_paths = set()
+            unique_overlays = []
+            for o in overlay_images:
+                if o["path"] not in seen_paths:
+                    seen_paths.add(o["path"])
+                    unique_overlays.append(o)
+            overlay_images = unique_overlays
+
+            # Let user edit keywords for each uploaded image
+            if overlay_images:
+                st.write(tr("Edit trigger keywords"))
+                edited_overlays = []
+                for i, o in enumerate(overlay_images):
+                    cols = st.columns([0.3, 0.7])
+                    with cols[0]:
+                        st.image(o["path"], width=80)
+                    with cols[1]:
+                        kw = st.text_input(
+                            tr("Keyword"),
+                            value=o["keyword"],
+                            key=f"overlay_kw_{i}",
+                        )
+                        edited_overlays.append({"keyword": kw.lower().strip(), "path": o["path"]})
+                overlay_images = edited_overlays
+                params.keyword_overlay_images = overlay_images
+                config.ui["keyword_overlay_images"] = overlay_images
+            else:
+                params.keyword_overlay_images = []
+                config.ui["keyword_overlay_images"] = []
 
 with right_panel:
     with st.container(border=True):
