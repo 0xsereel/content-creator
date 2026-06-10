@@ -692,6 +692,83 @@ def generate_script(
     return final_script.strip()
 
 
+def generate_scene_prompts(scenes: List[str], style_cfg: dict) -> List[dict]:
+    """
+    For each script scene, produce a Flux JSON prompt object.
+    The LLM fills ONLY `scene` and `subjects`. We inject the locked
+    style/color_palette/lighting/composition ourselves so they are
+    byte-identical on every shot. Returns a list aligned 1:1 with `scenes`.
+    """
+    if not scenes:
+        return []
+
+    scene_count = len(scenes)
+    system = (
+        "You are a visual director for short explainer videos. "
+        f"You are given exactly {scene_count} scene(s) of narration. "
+        "For EACH scene, return ONE JSON object with exactly two keys: "
+        "`scene` (one sentence describing the overall visual setting) and "
+        "`subjects` (a list of 1-2 objects, each with `description`, `pose`, `position`). "
+        "Illustrate the scene's MEANING, not the literal words. "
+        "Keep everything abstract and conceptual. No human faces. No text in the image. "
+        f"CRITICAL: You must return a JSON array containing EXACTLY {scene_count} object(s), "
+        f"no more and no less. One object per scene, in the same order as the scenes provided. "
+        "No prose, no markdown, no extra commentary."
+    )
+    user = "Scenes:\n" + "\n".join(f"{i+1}. {s}" for i, s in enumerate(scenes))
+
+    raw = ""
+    for attempt in range(_max_retries):
+        try:
+            raw = _generate_response(prompt=f"{system}\n\n{user}")
+            if not raw or "Error: " in raw:
+                logger.warning(f"scene prompt generation returned error: {raw}")
+                continue
+            partials = json.loads(raw)
+            if not isinstance(partials, list):
+                logger.warning("scene prompt response is not a JSON array")
+                continue
+            if len(partials) != len(scenes):
+                logger.warning(
+                    f"scene prompt count mismatch: got {len(partials)}, expected {len(scenes)}"
+                )
+                if attempt < _max_retries - 1:
+                    continue
+                # fall through to fallback after retries
+                partials = None
+            if partials is not None:
+                prompts = []
+                for p in partials:
+                    prompts.append({
+                        "scene": p.get("scene", ""),
+                        "subjects": p.get("subjects", []),
+                        "style": style_cfg.get("style", ""),
+                        "color_palette": style_cfg.get("color_palette", []),
+                        "lighting": style_cfg.get("lighting", ""),
+                        "composition": style_cfg.get("composition", ""),
+                    })
+                logger.success(f"generated {len(prompts)} scene prompts")
+                return prompts
+        except json.JSONDecodeError as e:
+            logger.warning(f"failed to parse scene prompts as JSON: {e}")
+        except Exception as e:
+            logger.warning(f"failed to generate scene prompts: {e}")
+
+    # Fallback: minimal prompts merged with locked fields
+    logger.warning("falling back to minimal scene prompts")
+    prompts = []
+    for scene in scenes:
+        prompts.append({
+            "scene": scene,
+            "subjects": [],
+            "style": style_cfg.get("style", ""),
+            "color_palette": style_cfg.get("color_palette", []),
+            "lighting": style_cfg.get("lighting", ""),
+            "composition": style_cfg.get("composition", ""),
+        })
+    return prompts
+
+
 def generate_terms(video_subject: str, video_script: str, amount: int = 5) -> List[str]:
     prompt = f"""
 # Role: Video Search Terms Generator

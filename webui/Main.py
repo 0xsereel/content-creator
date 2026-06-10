@@ -28,16 +28,16 @@ from app.services import task as tm
 from app.utils import utils
 
 st.set_page_config(
-    page_title="MoneyPrinterTurbo",
+    page_title="Sereel",
     page_icon="🤖",
     layout="wide",
     initial_sidebar_state="auto",
     menu_items={
         "Report a bug": "https://github.com/harry0703/MoneyPrinterTurbo/issues",
-        "About": "# MoneyPrinterTurbo\nSimply provide a topic or keyword for a video, and it will "
+        "About": "# Sereel\nAI-powered video generation for financial content. Simply provide a topic or keyword for a video, and it will "
         "automatically generate the video copy, video materials, video subtitles, "
         "and video background music before synthesizing a high-definition short "
-        "video.\n\nhttps://github.com/harry0703/MoneyPrinterTurbo",
+        "video.\n\nhttps://sereel.com",
     },
 )
 
@@ -84,7 +84,7 @@ locales = utils.load_locales(i18n_dir)
 title_col, lang_col = st.columns([3, 1])
 
 with title_col:
-    st.title(f"MoneyPrinterTurbo v{config.project_version}")
+    st.title(f"Sereel v{config.project_version}")
 
 with lang_col:
     display_languages = []
@@ -345,8 +345,8 @@ if not config.app.get("hide_config", False):
                             ##### Ollama配置说明
                             - **API Key**: 随便填写，比如 123
                             - **Base Url**: 一般为 http://localhost:11434/v1
-                                - 如果 `MoneyPrinterTurbo` 和 `Ollama` **不在同一台机器上**，需要填写 `Ollama` 机器的IP地址
-                                - 如果 `MoneyPrinterTurbo` 是 `Docker` 部署，建议填写 `http://host.docker.internal:11434/v1`{docker_hint}
+                                - 如果 `Sereel` 和 `Ollama` **不在同一台机器上**，需要填写 `Ollama` 机器的IP地址
+                                - 如果 `Sereel` 是 `Docker` 部署，建议填写 `http://host.docker.internal:11434/v1`{docker_hint}
                             - **Model Name**: 使用 `ollama list` 查看，比如 `qwen:7b`
                             """
 
@@ -773,15 +773,19 @@ with middle_panel:
             (tr("Pexels"), "pexels"),
             (tr("Pixabay"), "pixabay"),
             (tr("Local file"), "local"),
+            (tr("AI Generated"), "ai_generated"),
             (tr("TikTok"), "douyin"),
             (tr("Bilibili"), "bilibili"),
             (tr("Xiaohongshu"), "xiaohongshu"),
         ]
 
         saved_video_source_name = config.app.get("video_source", "pexels")
-        saved_video_source_index = [v[1] for v in video_sources].index(
-            saved_video_source_name
-        )
+        try:
+            saved_video_source_index = [v[1] for v in video_sources].index(
+                saved_video_source_name
+            )
+        except ValueError:
+            saved_video_source_index = 0
 
         selected_index = st.selectbox(
             tr("Video Source"),
@@ -1351,7 +1355,7 @@ if start_button:
         scroll_to_bottom()
         st.stop()
 
-    if params.video_source not in ["pexels", "pixabay", "local"]:
+    if params.video_source not in ["pexels", "pixabay", "local", "ai_generated"]:
         st.error(tr("Please Select a Valid Video Source"))
         scroll_to_bottom()
         st.stop()

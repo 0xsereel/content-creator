@@ -7,7 +7,7 @@ from loguru import logger
 
 from app.config import config
 from app.models import const
-from app.models.schema import VideoConcatMode, VideoParams
+from app.models.schema import VideoAspect, VideoConcatMode, VideoParams
 from app.services import llm, material, subtitle, video, voice, upload_post
 from app.services import state as sm
 from app.utils import utils
@@ -163,7 +163,7 @@ def generate_subtitle(task_id, params, video_script, sub_maker, audio_file):
     return subtitle_path
 
 
-def get_video_materials(task_id, params, video_terms, audio_duration):
+def get_video_materials(task_id, params, video_terms, audio_duration, video_script=None):
     if params.video_source == "local":
         logger.info("\n\n## preprocess local materials")
         materials = video.preprocess_video(
@@ -176,24 +176,111 @@ def get_video_materials(task_id, params, video_terms, audio_duration):
             )
             return None
         return [material_info.url for material_info in materials]
-    else:
-        logger.info(f"\n\n## downloading videos from {params.video_source}")
-        downloaded_videos = material.download_videos(
-            task_id=task_id,
-            search_terms=video_terms,
-            source=params.video_source,
-            video_aspect=params.video_aspect,
-            video_contact_mode=params.video_concat_mode,
-            audio_duration=audio_duration * params.video_count,
-            max_clip_duration=params.video_clip_duration,
-        )
-        if not downloaded_videos:
+
+    if params.video_source == "ai_generated":
+        logger.info("\n\n## generating AI visuals")
+        if not video_script:
             sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
-            logger.error(
-                "failed to download videos, maybe the network is not available. if you are in China, please use a VPN."
-            )
+            logger.error("video script is required for AI-generated visuals.")
             return None
-        return downloaded_videos
+
+        # Split script into scenes. Try paragraph breaks first, then fall back to
+        # sentence-level segmentation so we always get multiple scenes for long scripts.
+        raw_scenes = [s.strip() for s in video_script.split("\n\n") if s.strip()]
+        if len(raw_scenes) == 1 and len(raw_scenes[0]) > 200:
+            # Single paragraph — split by sentences for visual variety
+            import re
+            sentences = re.split(r'(?<=[.!?])\s+', raw_scenes[0])
+            sentences = [s.strip() for s in sentences if len(s.strip()) > 20]
+            # Group sentences into ~6-16 scenes depending on length (doubled for more visual variety)
+            target_scenes = max(6, min(16, len(sentences)))
+            group_size = max(1, len(sentences) // target_scenes)
+            raw_scenes = []
+            for i in range(0, len(sentences), group_size):
+                group = sentences[i:i + group_size]
+                raw_scenes.append(" ".join(group))
+                if len(raw_scenes) >= target_scenes:
+                    # Merge any remaining sentences into the last scene
+                    remaining = sentences[i + group_size:]
+                    if remaining:
+                        raw_scenes[-1] += " " + " ".join(remaining)
+                    break
+        scenes = raw_scenes
+        if not scenes:
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            logger.error("no scenes found in video script.")
+            return None
+
+        total_chars = sum(len(s) for s in scenes)
+        scene_durations = [
+            audio_duration * len(s) / max(total_chars, 1) for s in scenes
+        ]
+
+        # Generate scene prompts via visual-director LLM step
+        style_cfg = config.image_style
+        prompts = llm.generate_scene_prompts(scenes, style_cfg)
+        if not prompts:
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            logger.error("failed to generate scene prompts.")
+            return None
+
+        # Generate images via fal.ai
+        try:
+            from app.services import material_ai
+
+            image_cfg = config.image_generation
+            images = material_ai.generate_scene_images(prompts, image_cfg)
+        except Exception as e:
+            logger.error(f"failed to generate scene images: {e}")
+            sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+            return None
+
+        # Convert images to motion clips timed to each scene
+        aspect = VideoAspect(params.video_aspect)
+        video_width, video_height = aspect.to_resolution()
+        output_dir = utils.task_dir(task_id)
+        clip_paths = []
+        for i, (img_path, duration) in enumerate(zip(images, scene_durations)):
+            clip_path = os.path.join(output_dir, f"ai-scene-{i + 1}.mp4")
+            try:
+                video.create_image_clip_with_motion(
+                    img_path, duration, clip_path, video_width, video_height
+                )
+                clip_paths.append(clip_path)
+            except Exception as e:
+                logger.warning(
+                    f"failed to create motion clip for scene {i + 1}: {e}"
+                )
+                fallback_path = os.path.join(
+                    output_dir, f"ai-scene-fallback-{i + 1}.png"
+                )
+                material_ai.generate_fallback_card(
+                    video_width, video_height, fallback_path
+                )
+                video.create_image_clip_with_motion(
+                    fallback_path, duration, clip_path, video_width, video_height
+                )
+                clip_paths.append(clip_path)
+
+        return clip_paths
+
+    logger.info(f"\n\n## downloading videos from {params.video_source}")
+    downloaded_videos = material.download_videos(
+        task_id=task_id,
+        search_terms=video_terms,
+        source=params.video_source,
+        video_aspect=params.video_aspect,
+        video_contact_mode=params.video_concat_mode,
+        audio_duration=audio_duration * params.video_count,
+        max_clip_duration=params.video_clip_duration,
+    )
+    if not downloaded_videos:
+        sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
+        logger.error(
+            "failed to download videos, maybe the network is not available. if you are in China, please use a VPN."
+        )
+        return None
+    return downloaded_videos
 
 
 def generate_final_videos(
@@ -320,7 +407,7 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
 
     # 5. Get video materials
     downloaded_videos = get_video_materials(
-        task_id, params, video_terms, audio_duration
+        task_id, params, video_terms, audio_duration, video_script
     )
     if not downloaded_videos:
         sm.state.update_task(task_id, state=const.TASK_STATE_FAILED)
@@ -343,6 +430,12 @@ def start(task_id, params: VideoParams, stop_at: str = "video"):
         params.video_concat_mode = VideoConcatMode(params.video_concat_mode)
 
     # 6. Generate final videos
+    if params.video_source == "ai_generated":
+        # AI scene clips are already timed to exact scene durations;
+        # force sequential order and disable further subclipping.
+        params.video_concat_mode = VideoConcatMode.sequential
+        params.video_clip_duration = 9999
+
     final_video_paths, combined_video_paths = generate_final_videos(
         task_id, params, downloaded_videos, audio_file, subtitle_path
     )
